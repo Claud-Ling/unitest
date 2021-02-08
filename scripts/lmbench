@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# entry script for tool: lmbench.
+
+# $@ - params for tool.
+# $? - 0-OK,!0-ERROR.
+
+# script env.
+SCRP_NAME=`basename $0`
+THIS_PATH=`cd "$(dirname $0)"; pwd`
+. ${THIS_PATH}/_env
+
+# exec env init.
+SexecEnv run.sh "bin/lmbench/scripts tools/lmbench/scripts"
+
+# param runtime.
+LogF=${UTEST_RUNOUT}/${UTEST_RUNDESP}lmbench.log
+
+# do exec.
+SexecRunCfg "" bin
+SexecRun run.sh $@ ${LogF}
+
+# return.
+Sreturn

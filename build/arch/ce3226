@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# Cross env config for arch: aarch64.
+CROSS_IS=y
+
+CROSS_ARCH=aarch64
+CROSS_COMPILE=aarch64-linux-gnu-
+CROSS_COMPILE_HOST=
+CROSS_LINUX_DIR=

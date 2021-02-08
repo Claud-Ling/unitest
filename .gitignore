@@ -1,0 +1,7 @@
+build/arch/cross
+release/
+build/output/
+build/down/
+/output/
+*.o
+*.a

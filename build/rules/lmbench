@@ -1,0 +1,117 @@
+#!/bin/bash
+
+# rule for tool build: lmbench.
+# Author:lingyun@cambricon.com, 202102
+
+# function of env config.
+# $? - 0-OK, 1-ERROR.
+function lmbench_env {
+    InRuleEnv t lmbench lmbench wget https://jaist.dl.sourceforge.net/project/lmbench/development/lmbench-3.0-a9/lmbench-3.0-a9.tgz
+    #InRuleEnv t lmbench lmbench git git@gitlab.cambricon.com:bsp/tools/lmbench.git develop
+    return $?
+}
+
+# function of confgure(and patch) before make.
+# $? - 0-OK, 1-ERROR.
+#function lmbench_conf() {
+#    InRuleConf configure
+#    return $?
+#}
+
+# function of make targets.
+# $@ - make targets list.
+# $? - 0-OK, 1-ERROR.
+function lmbench_make() {
+    RetVal=0
+    Target="$@"
+    Tinstall=`echo "${Target}" |grep "install"`
+    if [ ! -z "${Tinstall}" ]; then
+        if [ -d "${RulePOut}/bin" ]; then
+            rm -r ${RulePOut}/bin
+        fi
+    fi
+    PwdPreMake=`pwd`
+    cd src
+    if [ -z "${CROSS_IS}" ]; then
+        InRuleMake BASE=${RulePOut} ${Target}
+        RetVal=$?
+    else
+        InRuleMake CC=${CROSS_COMPILE}gcc AR=${CROSS_COMPILE}ar OS=${CROSS_ARCH}-linux-gnu BASE=${RulePOut} ${Target}
+        RetVal=$?
+    fi
+    if [ ${RetVal} -eq 0 ] && [ ! -z "${Tinstall}" ]; then
+        echoI "install scripts ..."
+        cp ../scripts ${RulePOut} -fr
+        RunOS=${CROSS_ARCH}-linux-gnu
+        cd ${RulePOut}
+        mv bin ${RunOS}
+        mkdir bin
+        mv ${RunOS} bin/
+        cd bin
+        ln -sf ${RunOS}/* .
+
+        echoI "gen run.sh ..."
+        RunSh=${RulePOut}/scripts/run.sh
+        echo '#!/bin/sh' > ${RunSh}
+        echo '' >> ${RunSh}
+        echo '# run.sh [config/rerun/see/clean/disclean] [outpath]' >> ${RunSh}
+        echo '' >> ${RunSh}
+        echo 'PATH=`pwd`:$PATH; export PATH' >> ${RunSh}
+        echo "OS=${RunOS}; export OS" >> ${RunSh}
+        echo '' >> ${RunSh}
+        echo 'if [ "$1" = "clean" ]; then' >> ${RunSh}
+        echo '    echo "clean lmbench results ..."' >> ${RunSh}
+        echo '    rm -f ../results/*.out' >> ${RunSh}
+        echo '    rm -f ../results/*.errs' >> ${RunSh}
+        echo '    rm -f ../results/*.perc' >> ${RunSh}
+        echo '    rm -f ../results/${OS}/*' >> ${RunSh}
+        echo '    exit 0' >> ${RunSh}
+        echo 'fi' >> ${RunSh}
+        echo '' >> ${RunSh}
+        echo 'if [ "$1" = "disclean" ]; then' >> ${RunSh}
+        echo '    echo clean lmbench results and config ...' >> ${RunSh}
+        echo '    rm -f ../results/*.out' >> ${RunSh}
+        echo '    rm -f ../results/*.errs' >> ${RunSh}
+        echo '    rm -f ../results/*.perc' >> ${RunSh}
+        echo '    rm -f ../results/${OS}/*' >> ${RunSh}
+        echo '    rm -f ../bin/${OS}/CONFIG.*' >> ${RunSh}
+        echo '    exit 0' >> ${RunSh}
+        echo 'fi' >> ${RunSh}
+        echo '' >> ${RunSh}
+        echo 'CONFIG=`ls ../bin/${OS} |grep CONFIG`' >> ${RunSh}
+        echo 'if [ "$1" = "config" ] || [ -z "${CONFIG}" ]; then' >> ${RunSh}
+        echo '    config-run' >> ${RunSh}
+        echo "    sed -e 's/MAIL=yes/MAIL=no/g' -i ../bin/\${OS}/CONFIG.*" >> ${RunSh}
+        echo 'fi' >> ${RunSh}
+        echo '' >> ${RunSh}
+        echo 'if [ -z "$1" ] || [ "$1" = "rerun" ]; then' >> ${RunSh}
+        echo '    results' >> ${RunSh}
+        echo 'fi' >> ${RunSh}
+        echo '' >> ${RunSh}
+        echo 'if [ "$1" = "see" ]; then' >> ${RunSh}
+        echo '    PWD_SAVE=`pwd`; cd ../results' >> ${RunSh}
+        echo '    LIST=`getlist`' >> ${RunSh}
+        echo '    if [ ! -z "$2" ]; then' >> ${RunSh}
+        echo '        SOUT=$2.summary' >> ${RunSh}
+        echo '        POUT=$2.percent' >> ${RunSh}
+        echo '    else' >> ${RunSh}
+        echo '        SOUT=../results/summary' >> ${RunSh}
+        echo '    fi' >> ${RunSh}
+        echo '    getsummary ${LIST} >${SOUT}.out 2>${SOUT}.errs' >> ${RunSh}
+        echo '    #getpercent ${LIST} >${POUT}.out 2>${POUT}.errs' >> ${RunSh}
+        echo '    percent ${SOUT}.out >${SOUT}.perc' >> ${RunSh}
+        echo '    cd ${PWD_SAVE}' >> ${RunSh}
+        echo 'fi' >> ${RunSh}
+        echo '' >> ${RunSh}
+        chmod +x ${RunSh}
+
+        echoI "install scripts done"
+
+        echoI "install webpage-lm.tar ..."
+        mkdir -p ${RulePOut}/src
+        cp -f ${RulePSrc}/src/webpage-lm.tar ${RulePOut}/src/
+        echoI "install webpage-lm.tar done"
+    fi
+    cd ${PwdPreMake}
+    return ${RetVal}
+}

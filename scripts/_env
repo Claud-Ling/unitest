@@ -1,0 +1,248 @@
+#!/bin/sh
+
+# env and functions for scripts.
+# not executable script, droped by utest.
+# tools' entry scripts can source this.
+# Author:lingyun@cambricon.com, 202102
+
+THIS_PATH=`cd "$(dirname $0)"; pwd`
+
+# env for root.
+UTEST_ROOT=`dirname ${THIS_PATH}`
+UTEST_PBIN="/app/bin `dirname ${UTEST_ROOT}`/bin"
+UTEST_PLIB="/app/lib `dirname ${UTEST_ROOT}`/lib"
+
+# env for run.
+# ${UTEST_RUNDESP} -- run desp sting pre: line index or null.
+# ${UTEST_RUNOUT}  -- run log/rpt out path, null as default.
+# ${UTEST_RUNIN}   -- run in path, null as UTEST_RUNOUT.
+if [ -z "${UTEST_RUNOUT}" ]; then
+    UTEST_RUNOUT="${UTEST_ROOT}/output/ut-scripts"
+fi
+if [ ! -d ${UTEST_RUNOUT} ]; then
+	mkdir -p ${UTEST_RUNOUT}
+fi
+if [ -z "${UTEST_RUNIN}" ]; then
+    UTEST_RUNIN="${UTEST_RUNOUT}"
+fi
+if [ ! -d ${UTEST_RUNIN} ]; then
+	mkdir -p ${UTEST_RUNIN}
+fi
+
+# return for run.
+SretPass="[PASS]"
+SretFail="[FAIL]"
+
+# para for run.
+ScriptName=
+ScriptRet=0
+
+# function of echo debug msg.
+# $@ - debug msg.
+# $? - 0-OK.
+SechoD() {
+	#echo "${UTEST_RUNDESP}${ScriptName}<DEBUG> $@"
+	return 0
+}
+
+# function of echo info msg.
+# $@ - info msg.
+# $? - 0-OK.
+SechoI() {
+echo "${UTEST_RUNDESP}${ScriptName}> $@"
+return 0
+}
+
+# function of echo error msg.
+# $@ - error msg.
+# $? - 0-OK.
+SechoE() {
+	echo "${UTEST_RUNDESP}${ScriptName}<ERROR> $@"
+	return 0
+}
+
+# function of exit with error code and msg.
+# $1 - error code: 0-PASS, !0-FAIL.
+# $2 - error msg.
+# $? - exit.
+SexitI() {
+	if [ ! -z "$2" ]; then
+		SechoE "$2"
+	fi
+	if [ $1 -eq 0 ]; then
+		SechoI "${SretPass}"
+	else
+		SechoI "${SretFail} $1"
+	fi
+	exit $1
+}
+
+# function of script exec env init.
+# $1 - name list of exec bin/script.
+# $2 - more path list for export.
+# $3 - more lib list for export.
+# $? - 0-OK,1-ERROR and exit.
+SexecEnv() {
+    if [ -z "$1" ]; then
+		SexitI 1 "SexecEnv error"
+    fi
+	if [ -z "${SCRP_NAME}" ]; then
+		ScriptName=`echo "$1" |sed -e 's/ /_/g'`
+	else
+		ScriptName=${SCRP_NAME}
+	fi
+	ScriptPATH=
+	Spaths="$2 ${UTEST_PBIN}"
+	for Spath in ${Spaths}; do
+		Sabs=`echo ${Spath} |grep ^/`
+		if [ -z "${Sabs}" ]; then
+			Spath=${UTEST_ROOT}/${Spath}
+		fi
+		if [ -d ${Spath} ]; then
+			ScriptPATH="${ScriptPATH}:${Spath}"
+		fi
+	done
+	export PATH=`echo -n $PATH${ScriptPATH} |sed -e 's/:/\n/g' |awk ' !x[$0]++' |tr "\n" ":"`
+	for Exec in $1; do
+		Epath=`which ${Exec}`
+		if [ -z "${Epath}" ]; then
+			SexitI 2 "${Exec} not found"
+		fi
+	done
+	ScriptLIB=
+	Spaths="$3 ${UTEST_PLIB}"
+	for Spath in ${Spaths}; do
+		Sabs=`echo ${Spath} |grep ^/`
+		if [ -z "${Sabs}" ]; then
+			Spath=${UTEST_ROOT}/${Spath}
+		fi
+		if [ -d ${Spath} ]; then
+			ScriptLIB="${ScriptLIB}:${Spath}"
+		fi
+	done
+	export LD_LIBRARY_PATH=`echo -n $LD_LIBRARY_PATH${ScriptLIB} |sed -e 's/:/\n/g' |awk ' !x[$0]++' |tr "\n" ":"`
+	SechoD "scrp: ${ScriptName}"
+	SechoD "exec: $1"
+	SechoD "PATH: $PATH"
+	SechoD "PLIB: $LD_LIBRARY_PATH"
+	SechoD "in  : ${UTEST_RUNIN}"
+	SechoD "out : ${UTEST_RUNOUT}"
+	ScriptRet=0
+    return ${ScriptRet}
+}
+
+# exec run params.
+ScriptAny=0
+ScriptMode=0
+ScriptRout=
+
+# function of config before exec run.
+# $1 - any: null-by ${ScriptRet},any-anyway.
+# $2 - mode: name/path/bin.
+# $3 - rout: 2>&1 out file.
+# $? - 0-OK,1-ERROR.
+SexecRunCfg() {
+	if [ -z "$1" ]; then
+		ScriptAny=0
+	else
+		ScriptAny=1
+	fi
+	if [ "$2" == "bin" ]; then
+		ScriptMode=2
+	elif [ "$2" == "path" ]; then
+		ScriptMode=1
+	else
+		ScriptMode=0
+	fi
+	ScriptRout=$3
+	return 0
+}
+
+# function of script exec run.
+# $1 - name of exec bin/script.
+# $@ - bin's args.
+# $? - 0-OK,1-ERROR.
+SexecRun() {
+	if [ ${ScriptAny} -eq 0 ] && [ ! ${ScriptRet} -eq 0 ]; then
+		return ${ScriptRet}
+	fi
+	ExecRet=0
+	Exec=`echo $@ |awk '{print $1}'`
+	ExecP=`which ${Exec}`
+	if [ -z "${ExecP}" ]; then
+		SechoE "${Exec} not env"
+		ExecRet=3
+	else
+		PwdPreScipt=`pwd`
+		ExecP=`dirname ${ExecP}`
+		if [ ${ScriptMode} -gt 1 ]; then
+			RunIn=${ExecP}
+			ExecP="./"
+		else
+			RunIn=${UTEST_RUNIN}
+			if [ ${ScriptMode} -eq 0 ]; then
+				ExecP=
+			else
+				ExecP="${ExecP}/"
+			fi
+		fi
+		SechoD "cdto: ${RunIn}"
+		cd ${RunIn}
+		if [ -z "${ScriptRout}" ]; then
+			SechoD "run : ${ExecP}$@"
+			${ExecP}$@
+			ExecRet=$?
+		else
+			SechoD "run: ${ExecP}$@ 2>&1 > ${ScriptRout}"
+			${ExecP}$@ 2>&1 > ${ScriptRout}
+			ExecRet=$?
+		fi
+		cd ${PwdPreScipt}
+	fi
+	if [ ${ScriptAny} -eq 0 ]; then
+		ScriptRet=${ExecRet}
+	fi
+    return ${ExecRet}
+}
+
+# function of anaysis log file.
+# $1 - log file.
+# $2 - PASS/FAIL to anaysis.
+# $3 - anaysis grep string.
+# $? - 0-OK,1-ERROR.
+Sanaysis() {
+	if [ ${ScriptAny} -eq 0 ] && [ ! ${ScriptRet} -eq 0 ]; then
+		return ${ScriptRet}
+	fi
+	if [ -z "$1" ] || [ -z "$3" ]; then
+		return 0
+	fi
+	ExecRet=0
+	if [ ! -f $1 ]; then
+		SechoE "$1 not exist"
+		ExecRet=4
+	else
+		Gstr=`cat $1 |grep "$3"`
+		if [ ! -z "${Gstr}" ]; then
+			if [ "$2" == "FAIL" ]; then
+				SechoE "anysis FAIL: ${Gstr}"
+				ExecRet=5
+			fi
+		else
+			if [ "$2" == "PASS" ]; then
+				SechoE "anysis PASS: (no) $3"
+				ExecRet=6
+			fi
+		fi
+	fi
+	if [ ${ScriptAny} -eq 0 ]; then
+		ScriptRet=${ExecRet}
+	fi
+    return ${ExecRet}
+}
+
+# function of script return.
+# $? - 0-OK,1-ERROR.
+Sreturn() {
+	SexitI ${ScriptRet}
+}

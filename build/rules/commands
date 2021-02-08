@@ -1,0 +1,80 @@
+#!/bin/bash
+
+# rule for commands build.
+# Author:lingyun@cambricon.com, 202102
+
+# function of commands list.
+# Get list to CmdsList.
+# $? - 0-OK, 1-ERROR.
+function commands_list() {
+    if [ -d ${UTU_PCMDS} ]; then
+        CmdsList=`ls ${UTU_PCMDS} -F |grep "/" |sed -e 's/\///' |tr "\n" " "`
+    else
+        CmdsList=
+    fi
+    return 0
+}
+
+# function of env config.
+# $1 - commands target.
+# $? - 0-OK, 1-ERROR.
+function commands_env() {
+    InRuleEnv c $1
+    return $?
+}
+
+# function of confgure(and patch) before make.
+# $? - 0-OK, 1-ERROR.
+#function commands_conf() {
+#    InRuleConf configure
+#    return $?
+#}
+
+# function of make targets.
+# $1 - commands target.
+# $@ - make targets list.
+# $? - 0-OK, 1-ERROR.
+function commands_make() {
+    RetVal=0
+    if [ $# -gt 1 ]; then
+        Targets=`echo $@ |sed -e 's/[^ ]* //'`
+    else
+        Targets=
+    fi
+    if [ -f Makefile ] || [ -f MAKEFILE ]; then
+        InRuleMake O=${RulePOut} ${Targets}
+        RetVal=$?
+    else
+        if [ -z "${Targets}" ]; then
+            CmdSrc=`find . -type f -name "*.c" |sed -e 's/.\///'`
+            CmdLib=`find . -type f -name "*.so" |sed -e 's/.\///' -e 's/lib/-l/g' -e 's/.so//'`
+            if [ ! -z "${CmdSrc}" ]; then
+                execQline ${CROSS_COMPILE}gcc -lpthread ${CmdLib} -o $1 ${CmdSrc}
+                RetVal=$?
+            else
+                echoE "command $1 has no .c file"
+                RetVal=1
+            fi
+        fi
+        if [[ "${Targets}" =~ "clean" ]]; then
+            rm -f *.o
+            if [ -f $1 ]; then
+                rm -f $1
+            fi
+            if [ -f ${RulePOut}/$1 ]; then
+                rm ${RulePOut}/$1
+            fi
+        fi
+        if [[ "${Targets}" =~ "install" ]]; then
+            if [ -f $1 ]; then
+                mkdir -p ${RulePOut}
+                cp -f $1 ${RulePOut}/
+                #execQline ${CROSS_COMPILE}strip ${RulePOut}/$1
+            else
+                echoE "install command $1 not exist"
+                RetVal=1
+            fi
+        fi
+    fi
+    return ${RetVal}
+}

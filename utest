@@ -1,0 +1,736 @@
+#!/bin/bash
+
+# ./utest [d/l/x/s/c/g/e/t/r/q/O/R/h/#n] [case]
+# for unit test run report.
+# Author:lingyun@cambricon.com, 202102
+
+# run env.
+SCRP_NAME=`basename $0`
+THIS_PATH=`cd "$(dirname $0)"; pwd`
+
+# unittest root.
+UT_ROOT=${THIS_PATH}
+UT_PBIN="/app/bin `dirname ${UT_ROOT}`/bin"
+UT_PLIB="/app/lib `dirname ${UT_ROOT}`/lib"
+
+# unittest env subdir.
+UT_DCASES=cases
+UT_DCMDS=commands
+UT_DTOOLS=tools
+UT_DSCPS=scripts
+UT_DOUTPUT=.output
+UT_DOOUTPUT=output
+
+# unittest run env.
+UTF_PATH=${UT_ROOT}/${UT_DCASES}
+UTF_FCRUN=.caserun
+UTF_FCCMD=.casecmd
+UTF_FCSCP=.casescp
+UTF_PCRUN=${UTF_PATH}/${UTF_FCRUN}
+UTF_PCCMD=${UTF_PATH}/${UTF_FCCMD}
+UTF_PCSCP=${UTF_PATH}/${UTF_FCSCP}
+
+UTC_PATH=${UT_ROOT}/${UT_DCMDS}
+UTT_PATH=${UT_ROOT}/${UT_DTOOLS}
+UTS_PATH=${UT_ROOT}/${UT_DSCPS}
+
+# unittest run out.
+UTO_PATH=${UT_ROOT}/${UT_DOUTPUT}
+UTOO_PATH=${UT_ROOT}/${UT_DOOUTPUT}
+UTO_DLAST=ut-last
+UTO_FRUN=run
+UTO_FCASE=tc
+UTO_FLOG=log
+UTO_FRPT=rpt
+
+# utest globe values.
+UtestPATH=
+UtestLIB=
+UtestNeedRun=1
+UtestEnull=/dev/null
+UtestRunSh=
+UtestInfo=0
+UtestQuiet=0
+UtestCases=
+UtestCasePath=
+UtestNewCase=
+UtestNewCForce=0
+UtestEditCase=
+UtestOutClean=0
+UtestOutPath=${UTO_PATH}
+UtestOutName=
+UtestOutPre=ut-
+
+# print define.
+PDEBUG="[DBG] "
+PERROR="[**] "
+PINFO="[--] "
+PEXEC="[++] "
+
+# function of echo debug msg.
+# $@ - debug msg.
+# $? - 0-OK.
+echoD() {
+	echo "${PDEBUG}$@"
+	return 0
+}
+
+# function of error echo.
+# $@ - string to be print.
+# $? - 0-OK.
+echoE() {
+	echo "${PERROR}$@"
+	return 0
+}
+
+# function of info echo.
+# $@ - string to be print.
+# $? - 0-OK.
+echoI() {
+    if [ ${UtestInfo} -gt 0 ]; then
+        echo "${PINFO}$@"
+    fi
+	return 0
+}
+
+# function of run line for quiet out.
+# $@ - exec line to be run.
+# $? - 0-OK,1-ERROR.
+execQline() {
+    if [ ${UtestInfo} -gt 0 ]; then
+        echo "${PEXEC}$@"
+    fi
+    if [ ${UtestQuiet} -gt 0 ]; then
+        $@ >> ${UtestEnull} 2>&1
+    else
+        $@
+    fi
+    return $?
+}
+
+# function of case is support?
+# $1 - case name(or path), see in ${UTF_PATH}.
+# $? - 0-not support, 1-support.
+CaseIsSupport() {
+    if [ -z "$1" ]; then
+		return 0
+	else
+		Cpath=$1
+		Cabs=`echo ${Cpath} |grep ^/`
+		if [ -z "${Cabs}" ]; then
+			Cpath=${UTF_PATH}/${Cpath}
+		fi
+		if [ -f "${Cpath}" ]; then
+			return 1
+		else
+			return 0
+		fi
+	fi
+}
+
+# function of script is support?
+# $1 - script name(maybe [in]./xxx), see in ${UTS_PATH}.
+# $? - 0-not support, 1-support.
+ScpIsSupport() {
+	ScpName=`echo $1 |sed 's#^\[.*\]##'`
+	ScpName=`echo ${ScpName} |sed 's#^./##'`
+    if [ -z "$1" ] || [ ! -x "${UTS_PATH}/${ScpName}" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# function of command is support(all in $PATH)?
+# $1 - command name(maybe [in]./xxx), see in $PATH: ${UTC_PATH} ${UT_PBIN}.
+# $? - 0-not support, 1-support.
+CmdIsSupport() {
+	CmdName=`echo $1 |sed 's#^\[.*\]##'`
+	CmdName=`echo ${CmdName} |sed 's#^./##'`
+	CmdPath=`which ${CmdName}`
+    if [ -z "$CmdPath" ] || [ ! -x "$CmdPath" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# function of clean temp cases file.
+# $? - none.
+TmpClean() {
+    rm -fr ${UTF_PCCMD}
+    rm -fr ${UTF_PCSCP}
+}
+
+# function of add command line.
+# $@ - command case line.
+# $? - 0-OK,1-ERROR.
+TmpAddCmd() {
+    CmdBin=`echo $@ |awk '{print $1}'`
+    CmdIsSupport ${CmdBin}
+    if [ $? -gt 0 ]; then
+        echoI "${UTF_FCCMD}: $@"
+        echo "$@" >> ${UTF_PCCMD}
+        return 0
+    else
+        echoE "${CmdBin} not command"
+        return 1
+    fi
+}
+
+# function of add script line.
+# $@ - script case line.
+# $? - 0-OK,1-ERROR.
+TmpAddScp() {
+    ScpBin=`echo $@ |awk '{print $1}'`
+    ScpIsSupport ${ScpBin}
+    if [ $? -gt 0 ]; then
+        echoI "${UTF_FCSCP}: $@"
+        echo "$@" >> ${UTF_PCSCP}
+        return 0
+    else
+        echoE "${ScpBin} not script"
+        return 1
+    fi
+}
+
+# function of get case abs path.
+# result in ${UtestCasePath}
+# $1 - case name/path.
+# $? - 0-OK,1-ERROR.
+CasePath() {
+    UtestCasePath=
+    if [ -z "$1" ]; then
+        return 1
+    fi
+    Pre1=`echo $1 |cut -c 1`
+    Pre2=`echo $1 |cut -c 1,2`
+    if [ "${Pre1}" = "/" ]; then
+        UtestCasePath=$1
+    elif [ "${Pre2}" = ".." ] || [ "${Pre2}" = "./" ]; then
+        UtestCasePath=${UT_ROOT}/$1
+    else
+        UtestCasePath=${UTF_PATH}/$1
+    fi
+    return 0
+}
+
+# function of gen run case file.
+# by cmd/scp tmp case and ${UtestCases}.
+# $? - 0-OK,1-ERROR.
+RunGen() {
+    RunCleaned=0
+    CaseSrc="${UtestCases}"
+    if [ -f ${UTF_PCSCP} ]; then
+        CaseSrc="${CaseSrc} ${UTF_FCSCP}"
+    fi
+    if [ -f ${UTF_PCCMD} ]; then
+        CaseSrc="${CaseSrc} ${UTF_FCCMD}"
+    fi
+    for fCase in ${CaseSrc}; do
+        CasePath ${fCase}
+        if [ -f ${UtestCasePath} ]; then
+            if [ ${RunCleaned} -eq 0 ]; then
+                echoD "gen : run case ${UTF_FCRUN}"
+                GenTime=`date "+%Y-%m-%d %H:%M:%S"`
+                echo "# run case at ${GenTime}" >${UTF_PCRUN}
+                RunCleaned=1
+            fi
+            echoI "cases: ${fCase}"
+            echo "# ${fCase}" >>${UTF_PCRUN}
+            cat ${UtestCasePath} |grep '^[^#]' |grep -v '^$' >>${UTF_PCRUN}
+        else
+            echoE "case ${fCase} not exist"
+            return 1
+        fi
+    done
+    return 0
+}
+
+# function of creat new case file.
+# by ${UtestNewCase} and ${UtestNewCForce}.
+# $? - 0-OK,1-ERROR.
+NewGen() {
+    if [ -z "${UtestNewCase}" ]; then
+        return 0
+    fi
+    if [ -f ${UTF_PCRUN} ]; then
+        CasePath ${UtestNewCase}
+        if [ ! -f ${UtestCasePath} ] || [ ${UtestNewCForce} -gt 0 ]; then
+            echo "[GN] creat case: `basename ${UtestNewCase}`"
+            mkdir -p `dirname ${UtestCasePath}`
+            echo "# case: `basename ${UtestNewCase}`" >${UtestCasePath}
+            cat ${UTF_PCRUN} |grep '^[^#]' |grep -v '^$' >>${UtestCasePath}
+            return 0
+        else
+            echoE "case `basename ${UtestNewCase}` exist"
+        fi
+    else
+        echoE "no run case for new"
+    fi
+    return 1
+}
+
+# function of edit case file.
+# by ${UtestEditCase}.
+# $? - 0-OK,1-ERROR.
+EditCase() {
+    if [ -z "${UtestEditCase}" ]; then
+        return 0
+    fi
+    CasePath ${UtestEditCase}
+    if [ -f ${UtestCasePath} ]; then
+        echo "[ED] edit ${UtestEditCase}"
+        vi ${UtestCasePath}
+        return 0
+    else
+        echoE "case ${UtestEditCase} not exist"
+    fi
+    return 1
+}
+
+# function of env $PATH flush.
+# by ${UT_PBIN} and ${UTC_PATH}.
+# $1 - more path list for export.
+# $2 - more lib list for export.
+# $? - 0-OK,1-ERROR.
+PathFlush() {
+	UtestPATH=
+	Spaths="$1 ${UT_PBIN} ${UTC_PATH}"
+	for Spath in ${Spaths}; do
+		Sabs=`echo ${Spath} |grep ^/`
+		if [ -z "${Sabs}" ]; then
+			Spath=${UT_ROOT}/${Spath}
+		fi
+		if [ -d ${Spath} ]; then
+			UtestPATH="${UtestPATH}:${Spath}"
+		fi
+	done
+	UtestPATH=`echo -n ${UtestPATH} |sed -e 's/:/\n/g' |awk ' !x[$0]++' |tr "\n" ":"`
+	if [ "${UtestPATH}" == ":" ]; then
+		UtestPATH=
+	else
+		export PATH=`echo -n $PATH${UtestPATH} |sed -e 's/:/\n/g' |awk ' !x[$0]++' |tr "\n" ":"`
+	fi
+	UtestLIB=
+	Spaths="$2 ${UT_PLIB}"
+	for Spath in ${Spaths}; do
+		Sabs=`echo ${Spath} |grep ^/`
+		if [ -z "${Sabs}" ]; then
+			Spath=${UT_ROOT}/${Spath}
+		fi
+		if [ -d ${Spath} ]; then
+			UtestLIB="${UtestLib}:${Spath}"
+		fi
+	done
+	UtestLIB=`echo -n ${UtestLIB} |sed -e 's/:/\n/g' |awk ' !x[$0]++' |tr "\n" ":"`
+	echo ${UtestLIB}
+	if [ "${UtestLIB}" == ":" ]; then
+		UtestLIB=
+	else
+		export LD_LIBRARY_PATH=`echo -n $LD_LIBRARY_PATH${UtestLIB} |sed -e 's/:/\n/g' |awk ' !x[$0]++' |tr "\n" ":"`
+	fi
+	echoD "PATH: $PATH"
+	echoD "PLIB: $LD_LIBRARY_PATH"
+}
+
+# function of output flush.
+# by ${UtestOutPath} and ${UtestOutClean}.
+# $? - 0-OK,1-ERROR.
+OutFlush() {
+    if [ -h ${UTOO_PATH} ]; then
+        CurOut=`readlink ${UTOO_PATH}`
+        if [ ! "${UtestOutPath}" = "${CurOut}" ]; then
+            rm -f ${UTOO_PATH}
+            ln -sf ${UtestOutPath} ${UTOO_PATH}
+        fi
+    else
+        ln -sf ${UtestOutPath} ${UTOO_PATH}
+    fi
+    if [ ! -d ${UtestOutPath} ]; then
+        mkdir -p ${UtestOutPath}
+    fi
+    echoD "out : ${UtestOutPath}"
+    if [ ${UtestOutClean} -gt 0 ]; then
+        echoI "output clean"
+        rm -fr ${UTOO_PATH}/*
+    fi
+}
+
+# function of run result export.
+# exort to UTEST_RES_$1.
+# $1 - run exec index.
+# $2 - run exec return.
+# $3 - run exec line.
+# $4 - run exec type.
+# $5 - run exec tool.
+# $? - 0-OK.
+RunRes() {
+	if [ $2 -eq 0 ]; then
+		export UTEST_RES_$1="PASS $2 $3 $4 $5"
+	else
+		export UTEST_RES_$1="FAIL $2 $3 $4 $5"
+	fi
+}
+
+# function or run result report echo.
+# $1 - string to be echo.
+# $2 - report file path, null as stdout.
+# $? - 0-OK.
+RunResRptE() {
+	if [ -z "$2" ]; then
+		echo "$1"
+	else
+		echo "$1" >> $2
+	fi
+}
+
+# function or run result report.
+# print all exported result as report.
+# $1 - run exec num.
+# $2 - report file path, null as stdout.
+# $? - 0-OK.
+RunResRpt() {
+	if [ ! -z "$2" ] && [ -f $2 ]; then
+		rm $2
+	fi
+	RunResRptE "No. RES  CODE LINE T EXEC" $2
+	RunResRptE "--- ---- ---- ---- - ----------------" $2
+	ResIndex=1
+	ResRet=0
+	ResPass=0
+	while [ ${ResIndex} -le $1 ]; do
+		ResEnv=`env |grep "^UTEST_RES_${ResIndex}=" |awk -F "=" '{print $2}'`
+		if [ -z "${ResEnv}" ]; then
+			ResStr=`printf "%=-3d %-4s" ${ResIndex} null`
+			ResRet=1
+		else
+			ResStr=`echo "${ResIndex} ${ResEnv}" |awk '{printf("%3d %-4s %4d %4d %s %-16s", $1, $2, $3, $4, $5, $6)}'`
+			ResRet=`echo ${ResEnv} |awk '{print $2}'`
+		fi
+		RunResRptE "${ResStr}" $2
+		if [ ${ResRet} -eq 0 ]; then
+			ResPass=`expr ${ResPass} + 1`
+		fi
+		ResIndex=`expr ${ResIndex} + 1`
+	done
+	RunResRptE "-------------------------------------" $2
+	if [ ${ResPass} -eq $1 ]; then
+		RunResRptE "all $1 PASS." $2
+	else
+		ResFail=`expr $1 - ${ResPass}`
+		RunResRptE "${ResPass} PASS, ${ResFail} FAIL." $2
+	fi
+	return 0
+}
+
+# function of run case.
+# by ${UTF_PCRUN}.
+# $? - 0-OK,1-ERROR.
+RunCase() {
+    if [ ! -f "${UTF_PCRUN}" ]; then
+		echoD "run : no ${UTF_FCRUN}"
+        return 0
+    fi
+    # mkdir subdir for this run output.
+    RunTime=`date "+%Y%m%d-%H%M%S"`
+	if [ -z "${UtestOutName}" ]; then
+		RunOutD=${UtestOutPre}${RunTime}
+	else
+		RunOutD=${UtestOutName}
+	fi
+	RunOut=${UTOO_PATH}/${RunOutD}
+	RunIn=${RunOut}
+    mkdir -p ${RunOut}
+	# updata last.
+	RunOutLast=${UTOO_PATH}/${UTO_DLAST}
+	if [ -e ${RunOutLast} ]; then
+		rm -f ${RunOutLast}
+	fi
+	ln -sf ${RunOutD} ${RunOutLast}
+    # redirect to log file.
+    RunLog=${RunOut}/${UTO_FLOG}
+    RunRpt=${RunOut}/${UTO_FRPT}
+    RunFifo=${RunOut}/.fifo
+    if [ ${UtestQuiet} -gt 0 ]; then
+        UtestEnull=${RunLog}
+    fi
+    mkfifo ${RunFifo}
+    cat ${RunFifo} |tee -a ${RunLog} &
+    exec 1>${RunFifo}
+    exec 2>&1
+    # run case file.
+    echo "-------------------------------------"
+    echo "[RF] run at ${RunTime}"
+    echoI "outd: ${RunOutD}"
+    # gen run file as script.
+	if [ ! -z "${UTO_FRUN}" ]; then
+		RunSh=${RunOut}/${UTO_FRUN}
+		echoI "gen ${UTO_FRUN} file"
+		echo "#!/bin/sh" >${RunSh}
+		echo "# run at ${RunTime}" >>${RunSh}
+		echo "${UtestRunSh}" >>${RunSh}
+	fi
+    # gen case file as back.
+	if [ ! -z "${UTO_FCASE}" ]; then
+		RunTc=${RunOut}/${UTO_FCASE}
+		echoI "gen ${UTO_FCASE} file"
+		cp -f ${UTF_PCRUN} ${RunTc}
+	fi
+    # config env for utest case.
+    export UTEST_RUNOUT="${RunOut}"
+    # exec case line.
+    RunScpOK=0
+	RunScp=0
+	RunCmdOK=0
+	RunCmd=0
+	RunInv=0
+	RunRet=0
+	RunLine=0
+	RunNum=0
+	while read line; do
+		RunLine=`expr ${RunLine} + 1`
+		export UTEST_RUNDESP="L${RunLine}-"
+		lineh=`echo "${line}" |cut -c1`
+		if [ ! -z "$line" ] && [ ! $lineh = "#" ]; then
+			RunNum=`expr ${RunNum} + 1`
+			RunFirst=`echo "$line" |awk '{print $1}'`
+			RunPara="${line#* }"
+			RunToolIn=`echo ${RunFirst} |grep -o '^\[.*\]' |tr -d "[\[\]]"`
+			if [ -z "${RunToolIn}" ]; then
+				RunTool=${RunFirst}
+				RunToolIn=${RunIn}
+			else
+				RunTool=`echo ${RunFirst} |awk -F "]" '{print $2}'`
+			fi
+			export UTEST_RUNIN="${RunToolIn}"
+			RunToolInx=`echo ${RunTool} |grep "^./"`
+			if [ ! -z "${RunToolInx}" ]; then
+				RunTool=`echo $RunTool | sed 's#^./##'`
+			fi
+			ScpIsSupport ${RunTool}
+			if [ $? -gt 0 ]; then
+				echo "[RS] ${line}"
+				RunScp=`expr ${RunScp} + 1`
+				PwdPreRun=`pwd`
+				if [ ! -z "${RunToolInx}" ]; then
+					echoI "cdto: ${UTS_PATH}"
+					cd ${UTS_PATH}
+					execQline ./${RunTool} ${RunPara}
+					RunRet=$?
+				else
+					echoI "cdto: ${RunToolIn}"
+					cd ${RunToolIn}
+					execQline ${UTS_PATH}/${RunTool} ${RunPara}
+					RunRet=$?
+				fi
+				cd ${PwdPreRun}
+				if [ ${RunRet} -eq 0 ]; then
+					echoI "${RunNum}: ${RunLine}-${RunTool} -> PASS"
+					RunScpOK=`expr ${RunScpOK} + 1`
+				else
+					echoE "${RunNum}: ${RunLine}-${RunTool} -> FAIL:${RunRet}"
+				fi
+				RunRes ${RunNum} ${RunRet} ${RunLine} S ${RunTool}
+			else
+				CmdIsSupport ${RunTool}
+				if [ $? -gt 0 ]; then
+					echo "[RC] ${line}"
+					RunCmd=`expr ${RunCmd} + 1`
+					PwdPreRun=`pwd`
+					if [ ! -z "${RunToolInx}" ]; then
+						RunToolInx=`which ${RunTool}`
+						RunToolInx=`dirname ${RunToolInx}`
+						echoI "cdto: ${RunToolInx}"
+						cd ${RunToolInx}
+						execQline ./${RunTool} ${RunPara}
+						RunRet=$?
+					else
+						echoI "cdto: ${RunToolIn}"
+						cd ${RunToolIn}
+						execQline ${RunTool} ${RunPara}
+						RunRet=$?
+					fi
+					cd ${PwdPreRun}
+					if [ ${RunRet} -eq 0 ]; then
+						echoI "${RunNum}: ${RunLine}-${RunTool} -> PASS"
+						RunCmdOK=`expr ${RunCmdOK} + 1`
+					else
+						echoE "${RunNum}: ${RunLine}-${RunTool} -> FAIL:${RunRet}"
+					fi
+					cd ${PwdPreRun}
+					RunRes ${RunNum} ${RunRet} ${RunLine} C ${RunTool}
+				else
+					RunInv=`expr ${RunInv} + 1`
+					echoE "${RunNum}: ${RunLine}-${RunTool} -> FAIL:-1(not support)"
+					RunRes ${RunNum} -1 ${RunLine} U ${RunTool}
+				fi
+			fi
+		fi
+	done < ${UTF_PCRUN}
+	RunErr=`expr ${RunNum} - ${RunCmdOK} - ${RunScpOK}`
+    echo "-------------------------------------"
+	echo -n "[RN] "
+	if [ ${RunScp} -gt 0 ]; then
+		echo -n "${RunScp} scripts "
+	fi
+	if [ ${RunCmd} -gt 0 ]; then
+		echo -n "${RunCmd} commands "
+	fi
+	if [ ${RunInv} -gt 0 ]; then
+		echo -n "${RunInv} invalid"
+	fi
+	echo ""
+	echo -n "[RT] "
+	if [ ${RunScp} -gt 0 ]; then
+		echo -n "${RunScpOK} scp OK "
+	fi
+	if [ ${RunCmd} -gt 0 ]; then
+		echo -n "${RunCmdOK} cmd OK "
+	fi
+	if [ ${RunErr} -gt 0 ]; then
+		echo -n "${RunErr} error"
+	fi
+	echo ""
+	RunResRpt ${RunNum} ${RunRpt}
+	echoI "log : ${RunLog}"
+	echoI "rpt : ${RunRpt}"
+	echo -n -e "\015"
+	rm ${RunFifo}
+	return ${RunErr}
+}
+
+# Prepare scripts,commands,cases list before build
+CasesList=$(ls ${UTF_PATH} |tr "\n" " ")
+ScpsList=$(ls ${UTS_PATH} | grep -v _env |tr "\n" " ")
+
+# function of show help.
+# $1 - shell name.
+ShowHelp() {
+    echo "./${SCRP_NAME} [-f/c/s/e/t/T/o/O/n/v/q/h/string] [?]"
+    echo "     [-f] <case>    - run the case file"
+    echo "     [-c] <command> - run the command line"
+    echo "     [-s] <script>  - run the script line"
+    echo "     [-e]           - edit the run case"
+    echo "     [-t] <case>    - creat case from run"
+    echo "     [-T] <case>    - creat case file force"
+    echo "     [-o] <outpath> - output path, or - default"
+    echo "     [-O] <outpath> - same as -o, cleanup it"
+    echo "     [-n] <outname> - default as ${UtestOutPre}date-time"
+    echo "     [-v]           - view more info"
+    echo "     [-q]           - run with quiet"
+    echo "     [-h]           - show this help doc"
+    echo "     [string]       - auto detect case/script/command"
+    echo "     null           - default: run last case"
+    echo "     cases: ${CasesList}"
+    echo "     scripts: ${ScpsList}"
+    echo "     commands: see `echo ${UtestPATH}|sed "s/:/ /g"`..."
+    return 0
+}
+
+# path flush first.
+PathFlush
+
+# clean temp case file.
+TmpClean
+
+# run prepare.
+UtestRunSh="$0 $@"
+if [ $# -ge 1 ] ; then
+	# auto detect $1 string/arg(has -)?
+	ArgFlag=`echo $1 |cut -c 1`
+	if [ "${ArgFlag}" = "-" ]; then
+		while getopts f:c:s:t:T:eo:O:n:vqh arg; do
+			case $arg in
+				f)  UtestCases="${UtestCases} $OPTARG"
+					;;
+				c)  TmpAddCmd $OPTARG
+					if [ $? -gt 0 ]; then
+						exit 1
+					fi
+					;;
+				s)  TmpAddScp $OPTARG
+					if [ $? -gt 0 ]; then
+						exit 1
+					fi
+					;;
+				t)  UtestNewCase=$OPTARG
+					UtestNeedRun=0
+					;;
+				T)  UtestNewCase=$OPTARG
+					UtestNewCForce=1
+					UtestNeedRun=0
+					;;
+				e)  UtestEditCase=${UTF_FCRUN}
+					UtestNeedRun=0
+					;;
+				o)  if [ ! "$OPTARG" = "-" ]; then
+						UtestOutPath=$OPTARG
+					fi
+					;;
+				O)  if [ ! "$OPTARG" = "-" ]; then
+						UtestOutPath=$OPTARG
+					fi
+					UtestOutClean=1
+					;;
+				n)  UtestOutName=$OPTARG
+					;;
+				v)  UtestInfo=1
+					;;
+				q)  UtestQuiet=1
+					;;
+				h)  ShowHelp
+					exit 0
+					;;
+			esac
+		done
+	else
+		ArgFirst=`echo $@ |awk '{print $1}'`
+		CaseIsSupport ${ArgFirst}
+		if [ $? -gt 0 ]; then
+			UtestCases="$@"
+		else
+			ScpIsSupport ${ArgFirst}
+			if [ $? -gt 0 ]; then
+				TmpAddScp $@
+			else
+				CmdIsSupport ${ArgFirst}
+				if [ $? -gt 0 ]; then
+					TmpAddCmd $@
+				else
+					echoE "${ArgFirst} not support"
+					exit 1
+				fi
+			fi
+		fi
+	fi
+	RunGen
+	if [ $? -gt 0 ]; then
+		exit 1
+	fi
+else
+	if [ -f "${UTF_PCRUN}" ]; then
+		echoI "run as last"
+	else
+		echo "you can run with -f <case>, more see -h."
+		echo "<case>: ${CasesList}"
+		exit 1
+	fi
+fi
+
+# edit case?
+EditCase
+
+# new case?
+NewGen
+
+if [ ${UtestNeedRun} -gt 0 ]; then
+	# out flush?
+	OutFlush
+
+	# run case?
+	RunCase
+fi
+
+exit 0
+
